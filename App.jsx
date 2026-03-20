@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ResponsiveContainer 
 } from 'recharts';
 import { 
   ThermometerSnowflake, Droplets, MapPin, Settings2, AlertTriangle, 
-  Activity, Clock, ChevronDown, ChevronUp, Check, X, Download, Plus, Sparkles, Bot
+  Activity, Clock, ChevronDown, ChevronUp, Check, X, Download, Plus, Sparkles, Bot, Trash2
 } from 'lucide-react';
 
 const apiKey = ""; // Gemini API Key
@@ -24,18 +24,7 @@ const FARMS = {
   "Zolfo Springs": "https://forecast.weather.gov/MapClick.php?lat=27.4945&lon=-81.7986",
 };
 
-const CHART_COLORS = ["#059669", "#2563eb", "#dc2626", "#d97706", "#7c3aed", "#db2777"];
-
-const fetchGemini = async (prompt) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-  });
-  const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
-};
+const CHART_COLORS = ["#059669", "#2563eb", "#dc2626", "#d97706", "#7c3aed", "#db2777", "#0891b2", "#ea580c"];
 
 const calculateWetBulbStull = (tempF, rhPct) => {
   const rh = Math.max(0.000001, Math.min(100.0, parseFloat(rhPct)));
@@ -73,24 +62,58 @@ function App() {
   const [selectedFarms, setSelectedFarms] = useState([]);
   const [threshold, setThreshold] = useState(28.0);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [extraLocations, setExtraLocations] = useState([]);
+  
+  // Persistent Extra Locations logic
+  const [extraLocations, setExtraLocations] = useState(() => {
+    const saved = localStorage.getItem('frostguard_custom_locs');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [newFarmName, setNewFarmName] = useState("");
   const [newFarmLat, setNewFarmLat] = useState("");
   const [newFarmLon, setNewFarmLon] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState(null);
-  const [aiErrorResponses, setAiErrorResponses] = useState({});
-  const [aiErrorLoading, setAiErrorLoading] = useState({});
-  const [aiStrategy, setAiStrategy] = useState("");
-  const [aiStrategyLoading, setAiStrategyLoading] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('frostguard_custom_locs', JSON.stringify(extraLocations));
+  }, [extraLocations]);
+
+  const handleAddLocation = () => {
+    if (!newFarmLat || !newFarmLon) return;
+    const name = newFarmName.trim() || `Custom ${extraLocations.length + 1}`;
+    const lat = parseFloat(newFarmLat);
+    const lon = parseFloat(newFarmLon);
+
+    if (isNaN(lat) || isNaN(lon)) {
+      alert("Please enter valid numerical coordinates.");
+      return;
+    }
+
+    setExtraLocations([...extraLocations, { name, lat, lon, selected: true }]);
+    setNewFarmName("");
+    setNewFarmLat("");
+    setNewFarmLon("");
+  };
+
+  const toggleExtraLocation = (index) => {
+    const updated = [...extraLocations];
+    updated[index].selected = !updated[index].selected;
+    setExtraLocations(updated);
+  };
+
+  const removeExtraLocation = (index) => {
+    setExtraLocations(extraLocations.filter((_, i) => i !== index));
+  };
 
   const runForecast = async () => {
-    setLoading(true); setError(""); setResults(null); setAiStrategy("");
+    setLoading(true); setError(""); setResults(null);
     try {
       let locs = selectedFarms.map(name => ({ name, ...parseLatLon(FARMS[name]) }));
-      locs.push(...extraLocations);
-      if (locs.length === 0) throw new Error("Select a farm or add a custom location.");
+      locs.push(...extraLocations.filter(l => l.selected));
+      
+      if (locs.length === 0) throw new Error("Please select a farm or add/select a custom location.");
 
       const allData = []; const summaries = []; const allEvents = []; const failedLocs = [];
       let chartDataMap = {};
@@ -99,7 +122,7 @@ function App() {
       for (const loc of locs) {
         try {
           const pointsRes = await fetch(`https://api.weather.gov/points/${loc.lat},${loc.lon}`);
-          if (!pointsRes.ok) throw new Error("Gridpoint not found. Check if coordinates are in the US.");
+          if (!pointsRes.ok) throw new Error("NWS Error: Coordinates out of bounds or API down.");
           const pointsData = await pointsRes.json();
           const hourlyRes = await fetch(pointsData.properties.forecastHourly);
           const hourlyData = await hourlyRes.json();
@@ -139,83 +162,145 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto space-y-8">
-      <header className="flex items-center gap-3 border-b pb-6">
-        <ThermometerSnowflake className="text-emerald-600 h-8 w-8" />
-        <h1 className="text-2xl font-bold tracking-tight">FrostGuard <span className="text-slate-400 font-normal">| Wet-Bulb</span></h1>
+    <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50">
+      <header className="flex items-center justify-between border-b pb-6">
+        <div className="flex items-center gap-3">
+          <ThermometerSnowflake className="text-emerald-600 h-8 w-8" />
+          <h1 className="text-2xl font-bold tracking-tight">FrostGuard <span className="text-slate-400 font-normal">| Wet-Bulb</span></h1>
+        </div>
+        <div className="text-xs text-slate-400 bg-white px-3 py-1 rounded-full border">America/New_York</div>
       </header>
 
       <div className="grid lg:grid-cols-3 gap-8">
         <aside className="space-y-6 bg-white p-6 rounded-2xl border shadow-sm h-fit">
           <div className="space-y-4">
-            <label className="block text-sm font-semibold">Critical Threshold (°F)</label>
-            <input type="number" value={threshold} onChange={e => setThreshold(e.target.value)} className="w-full p-3 bg-slate-50 border rounded-xl" />
+            <label className="block text-sm font-semibold text-slate-700">Critical Threshold (°F)</label>
+            <input type="number" step="0.5" value={threshold} onChange={e => setThreshold(e.target.value)} className="w-full p-3 bg-slate-50 border rounded-xl font-bold text-lg text-emerald-700 focus:ring-2 focus:ring-emerald-500 outline-none" />
             
             <div className="pt-4 border-t">
-              <span className="text-sm font-semibold mb-2 block">Select Farms</span>
+              <span className="text-sm font-semibold mb-3 block text-slate-700">Preset Farms</span>
               <div className="grid grid-cols-2 gap-2">
                 {Object.keys(FARMS).map(f => (
                   <button key={f} onClick={() => setSelectedFarms(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f])}
-                    className={`text-xs p-2 rounded-lg border transition ${selectedFarms.includes(f) ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white text-slate-500'}`}>{f}</button>
+                    className={`text-xs p-2.5 rounded-lg border transition text-left flex justify-between items-center ${selectedFarms.includes(f) ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-bold' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300'}`}>
+                    <span className="truncate">{f}</span>
+                    {selectedFarms.includes(f) && <Check size={14}/>}
+                  </button>
                 ))}
               </div>
             </div>
 
-            <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-xs text-slate-400 flex items-center gap-1">Advanced Options {showAdvanced ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}</button>
-            {showAdvanced && (
-              <div className="space-y-2 p-3 bg-slate-50 rounded-xl border border-dashed">
-                <input placeholder="Farm Name" value={newFarmName} onChange={e => setNewFarmName(e.target.value)} className="w-full p-2 text-xs border rounded" />
-                <div className="flex gap-2">
-                  <input placeholder="Lat" type="number" value={newFarmLat} onChange={e => setNewFarmLat(e.target.value)} className="w-1/2 p-2 text-xs border rounded" />
-                  <input placeholder="Lon" type="number" value={newFarmLon} onChange={e => setNewFarmLon(e.target.value)} className="w-1/2 p-2 text-xs border rounded" />
+            {extraLocations.length > 0 && (
+              <div className="pt-4 border-t">
+                <span className="text-sm font-semibold mb-3 block text-slate-700">Custom Locations</span>
+                <div className="space-y-2">
+                  {extraLocations.map((loc, idx) => (
+                    <div key={idx} className="flex items-center gap-2 group">
+                      <button onClick={() => toggleExtraLocation(idx)} className={`flex-1 text-xs p-2.5 rounded-lg border transition text-left flex justify-between items-center ${loc.selected ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'bg-white text-slate-500 border-slate-200'}`}>
+                        <span className="truncate">{loc.name}</span>
+                        {loc.selected && <Check size={14}/>}
+                      </button>
+                      <button onClick={() => removeExtraLocation(idx)} className="p-2.5 text-slate-300 hover:text-red-500 transition"><Trash2 size={16}/></button>
+                    </div>
+                  ))}
                 </div>
-                <button onClick={() => { setExtraLocations([...extraLocations, {name: newFarmName || 'Custom', lat: newFarmLat, lon: newFarmLon}]); setNewFarmName(""); setNewFarmLat(""); setNewFarmLon(""); }} 
-                  className="w-full py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">+ Add Location</button>
+              </div>
+            )}
+
+            <button onClick={() => setShowAdvanced(!showAdvanced)} className="w-full py-2 text-xs text-slate-400 flex items-center justify-center gap-1 hover:text-slate-600 transition">
+              {showAdvanced ? "Hide New Farm Inputs" : "Add New Farm Coordinate"} {showAdvanced ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
+            </button>
+            
+            {showAdvanced && (
+              <div className="space-y-3 p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300 animate-in fade-in slide-in-from-top-2">
+                <input placeholder="Farm Name (e.g. North Block)" value={newFarmName} onChange={e => setNewFarmName(e.target.value)} className="w-full p-2.5 text-sm border rounded-lg bg-white" />
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold ml-1">Lat</label>
+                    <input type="number" step="any" placeholder="28.95" value={newFarmLat} onChange={e => setNewFarmLat(e.target.value)} className="w-full p-2.5 text-sm border rounded-lg bg-white" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] text-slate-400 uppercase font-bold ml-1">Lon</label>
+                    <input type="number" step="any" placeholder="-81.75" value={newFarmLon} onChange={e => setNewFarmLon(e.target.value)} className="w-full p-2.5 text-sm border rounded-lg bg-white" />
+                  </div>
+                </div>
+                <button onClick={handleAddLocation} className="w-full py-2.5 bg-slate-800 text-white rounded-lg text-sm font-bold hover:bg-black transition flex items-center justify-center gap-2 shadow-sm">
+                  <Plus size={16}/> Add to List
+                </button>
+                <p className="text-[10px] text-slate-400 text-center italic">US Longitudes must be negative (e.g. -100.78)</p>
               </div>
             )}
           </div>
-          <button onClick={runForecast} disabled={loading} className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold shadow-lg hover:bg-emerald-700 transition disabled:opacity-50">
-            {loading ? "Calculating..." : "Run 6-Day Forecast"}
+          
+          <button onClick={runForecast} disabled={loading} className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold shadow-lg hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+            {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Activity size={20}/>}
+            {loading ? "Fetching Data..." : "Run 6-Day Forecast"}
           </button>
+          
+          {error && <div className="p-3 bg-red-50 border border-red-100 text-red-600 text-xs rounded-xl flex items-start gap-2"><AlertTriangle size={14} className="shrink-0 mt-0.5"/> {error}</div>}
         </aside>
 
         <section className="lg:col-span-2 space-y-6">
           {results ? (
             <>
+              {results.warnings.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-2">
+                  <h3 className="text-xs font-bold text-amber-800 flex items-center gap-2"><AlertTriangle size={14}/> Failed Locations</h3>
+                  {results.warnings.map((w, i) => <div key={i} className="text-xs text-amber-700"><strong>{w.name}:</strong> {w.reason}</div>)}
+                </div>
+              )}
+
               <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                <h2 className="font-bold mb-4 flex items-center gap-2"><Clock size={18}/> Upcoming Critical Events</h2>
+                <h2 className="font-bold mb-4 flex items-center gap-2 text-slate-800"><Clock size={18} className="text-emerald-600"/> Actionable Freeze Events</h2>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="text-slate-400 border-b">
-                      <tr><th className="py-3">Farm</th><th className="py-3">Turn ON</th><th className="py-3">Duration</th><th className="py-3 text-right">Min WB</th></tr>
-                    </thead>
-                    <tbody>
-                      {results.events.map((ev, i) => (
-                        <tr key={i} className="border-b last:border-0">
-                          <td className="py-4 font-semibold">{ev.location}</td>
-                          <td className="py-4 text-emerald-600 font-medium">{formatDate(ev.startWater)}</td>
-                          <td className="py-4">{ev.duration} hrs</td>
-                          <td className="py-4 text-right font-bold">{ev.minWetbulb.toFixed(1)}°F</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  {results.events.length > 0 ? (
+                    <table className="w-full text-sm text-left whitespace-nowrap">
+                      <thead className="text-slate-400 border-b">
+                        <tr><th className="py-3 font-semibold">Farm</th><th className="py-3 font-semibold">Turn ON Water</th><th className="py-3 font-semibold text-center">Duration</th><th className="py-3 text-right font-semibold">Min WB</th></tr>
+                      </thead>
+                      <tbody>
+                        {results.events.map((ev, i) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-slate-50 transition">
+                            <td className="py-4 font-bold text-slate-700">{ev.location}</td>
+                            <td className="py-4 text-emerald-600 font-bold">{formatDate(ev.startWater)}</td>
+                            <td className="py-4 text-center"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-medium">{ev.duration} hrs</span></td>
+                            <td className="py-4 text-right font-black text-slate-900">{ev.minWetbulb.toFixed(1)}°F</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="py-12 text-center text-slate-400 italic">No freeze events forecasted for selected farms.</div>
+                  )}
                 </div>
               </div>
-              <div className="h-80 bg-white p-6 rounded-2xl border shadow-sm">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={results.chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="timeStr" tick={{fontSize: 10}} />
-                    <YAxis tick={{fontSize: 10}} domain={['auto', 'auto']} />
-                    <Tooltip />
-                    <ReferenceLine y={threshold} stroke="red" strokeDasharray="3 3" />
-                    {results.summaries.map((s, i) => <Line key={s.location} type="monotone" dataKey={s.location} stroke={CHART_COLORS[i % 6]} dot={false} strokeWidth={2} />)}
-                  </LineChart>
-                </ResponsiveContainer>
+
+              <div className="bg-white p-6 rounded-2xl border shadow-sm space-y-4">
+                <h2 className="font-bold flex items-center gap-2 text-slate-800"><Activity size={18} className="text-emerald-600"/> 6-Day Trend View</h2>
+                <div className="h-80 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={results.chartData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="timeStr" tick={{fontSize: 9, fill: '#94a3b8'}} tickMargin={10} minTickGap={50} />
+                      <YAxis tick={{fontSize: 10, fill: '#94a3b8'}} domain={['auto', 'auto']} tickFormatter={v => `${v}°`} />
+                      <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                      <Legend iconType="circle" wrapperStyle={{paddingTop: '20px', fontSize: '12px'}} />
+                      <ReferenceLine y={threshold} stroke="#ef4444" strokeDasharray="5 5" label={{position: 'insideTopLeft', value: 'Critical', fill: '#ef4444', fontSize: 10, fontWeight: 'bold'}} />
+                      {results.summaries.map((s, i) => <Line key={s.location} type="monotone" dataKey={s.location} stroke={CHART_COLORS[i % CHART_COLORS.length]} dot={false} strokeWidth={2.5} activeDot={{r: 6}} />)}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </>
-          ) : <div className="h-full flex items-center justify-center border-2 border-dashed rounded-3xl text-slate-300 font-medium">Select your farms to begin</div>}
+          ) : (
+            <div className="h-full min-h-[400px] flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-3xl bg-white/50 text-slate-400 text-center p-8 space-y-4">
+              <div className="p-4 bg-white rounded-full shadow-sm border border-slate-100"><MapPin size={32} className="text-slate-200" /></div>
+              <div>
+                <p className="font-bold text-slate-500">No Forecast Loaded</p>
+                <p className="text-sm max-w-xs">Select farms from the sidebar and click "Run Forecast" to see results.</p>
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </div>
